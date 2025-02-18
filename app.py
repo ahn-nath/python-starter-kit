@@ -1,8 +1,9 @@
 from datetime import date
-from flask import Flask, url_for, render_template, request, session
+
+import requests
+from flask import Flask, url_for, render_template, request, session, jsonify
 from flask_session import Session
 from functools import wraps
-
 
 from kinde_sdk import Configuration, ApiException
 from kinde_sdk.kinde_api_client import GrantType, KindeApiClient
@@ -29,7 +30,6 @@ kinde_client = KindeApiClient(**kinde_api_client_params)
 user_clients = {}
 
 
-
 def get_authorized_data(kinde_client):
     user = kinde_client.get_user_details()
     return {
@@ -48,7 +48,9 @@ def login_required(user):
             if not user.is_authenticated():
                 return app.redirect(url_for('index'))
             return f(*args, **kwargs)
+
         return decorated_function
+
     return decorator
 
 
@@ -59,7 +61,7 @@ def index():
     if session.get("user"):
         kinde_client = user_clients.get(session.get("user"))
         if kinde_client and kinde_client.is_authenticated():
-            data.update(get_authorized_data(kinde_client))        
+            data.update(get_authorized_data(kinde_client))
             template = "home.html"
     return render_template(template, **data)
 
@@ -72,6 +74,11 @@ def login():
 @app.route("/api/auth/register")
 def register():
     return app.redirect(kinde_client.get_register_url())
+
+
+@app.route("/add_organization")
+def add_organization():
+    return app.redirect(kinde_client.create_org())
 
 
 @app.route("/api/auth/kinde_callback")
@@ -105,6 +112,8 @@ def get_details():
             data = {"current_year": date.today().year}
             data.update(get_authorized_data(kinde_client))
             data["access_token"] = kinde_client.configuration.access_token
+            data["organizations"] = kinde_client.get_user_organizations()
+            print("ORGANIZATIONS:", data["organizations"])
             template = "details.html"
 
     return render_template(template, **data)
@@ -120,14 +129,14 @@ def get_helper_functions():
 
         if kinde_client:
             data.update(get_authorized_data(kinde_client))
-            #print(kinde_client.configuration.access_token)
+            # print(kinde_client.configuration.access_token)
             data["claim"] = kinde_client.get_claim("iss")
             data["organization"] = kinde_client.get_organization()
             data["user_organizations"] = kinde_client.get_user_organizations()
-            data["flag"] = kinde_client.get_flag("theme","red")
-            data["bool_flag"] = kinde_client.get_boolean_flag("is_dark_mode",False)
-            data["str_flag"] = kinde_client.get_string_flag("theme","red")
-            data["int_flag"] = kinde_client.get_integer_flag("competitions_limit",10)
+            data["flag"] = kinde_client.get_flag("theme", "red")
+            data["bool_flag"] = kinde_client.get_boolean_flag("is_dark_mode", False)
+            data["str_flag"] = kinde_client.get_string_flag("theme", "red")
+            data["int_flag"] = kinde_client.get_integer_flag("competitions_limit", 10)
             template = "helpers.html"
 
 
@@ -136,6 +145,7 @@ def get_helper_functions():
             template = "logged_out.html"
 
     return render_template(template, **data)
+
 
 @app.route("/api_demo")
 def get_api_demo():
@@ -170,7 +180,7 @@ def get_api_demo():
                     for user in api_response.body['users']
                 ]
                 data['is_api_call'] = True
-                
+
             except ApiException as e:
                 data['is_api_call'] = False
                 print("Exception when calling UsersApi %s\n" % e)
@@ -179,3 +189,36 @@ def get_api_demo():
                 print(f"Management API not setup: {ex}")
 
     return render_template(template, **data)
+
+
+# Organizations route
+@app.route("/organizations")
+def get_organizations():
+    template = "logged_out.html"
+    data = {"current_year": date.today().year}
+
+    if session.get("user"):
+        kinde_client = user_clients.get(session.get("user"))
+
+        if kinde_client:
+            data = {"current_year": date.today().year}
+            data.update(get_authorized_data(kinde_client))
+            data["organizations"] = kinde_client.get_user_organizations()["org_codes"]
+            template = "organizations.html"
+
+    return render_template(template, **data)
+
+
+@app.route("/api/organizations")
+def get_api_organizations():
+    data = {"current_year": date.today().year}
+
+    if session.get("user"):
+        kinde_client = user_clients.get(session.get("user"))
+
+        if kinde_client:
+            data = {"current_year": date.today().year}
+            data.update(get_authorized_data(kinde_client))
+            data["organizations"] = kinde_client.get_user_organizations()["org_codes"]
+
+    return jsonify(data)
