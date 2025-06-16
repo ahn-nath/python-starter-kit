@@ -1,14 +1,12 @@
 from datetime import date
-
-import requests
-from flask import Flask, url_for, render_template, request, session, jsonify
-from flask_session import Session
 from functools import wraps
 
+from flask import Flask, url_for, render_template, request, session, jsonify, redirect
 from kinde_sdk import Configuration, ApiException
-from kinde_sdk.kinde_api_client import GrantType, KindeApiClient
 from kinde_sdk.apis.tags import users_api
-from kinde_sdk.model.user import User
+from kinde_sdk.kinde_api_client import GrantType, KindeApiClient
+
+from flask_session import Session
 
 app = Flask(__name__)
 app.config.from_object("config")
@@ -54,16 +52,193 @@ def login_required(user):
     return decorator
 
 
+'''
 @app.route("/")
 def index():
+    # data = {"current_year": date.today().year}
+    data = {
+        "current_year": date.today().year,
+        "register_url": kinde_client.get_register_url({ 
+            "auth_url_params": {
+                "org_code": "your_dynamic_org_code"  
+            }
+        }),
+        "login_url": kinde_client.get_login_url({
+            "auth_url_params": {
+                "org_code": "org_800ae4346c69"
+            }
+        })
+    }
+    template = "logged_out.html"
+
+    if session.get("user"):
+        kinde_client_ = user_clients.get(session.get("user"))
+
+        if kinde_client_ and kinde_client_.is_authenticated():
+            data.update(get_authorized_data(kinde_client_))
+            template = "home.html"
+
+    return render_template(template, **data)
+'''
+
+'''
+@app.route("/")
+def index():
+    """
+        The main route of the application. This will receive an email as an input to determine the organization and then
+        pass it as an argument to the Kinde login URL. The user will be redirected to the Kinde login page
+        with the organization code
+
+        :return: render_template with the current year
+    """
     data = {"current_year": date.today().year}
     template = "logged_out.html"
+
     if session.get("user"):
-        kinde_client = user_clients.get(session.get("user"))
-        if kinde_client and kinde_client.is_authenticated():
-            data.update(get_authorized_data(kinde_client))
+        kinde_client_ = user_clients.get(session.get("user"))
+
+        if kinde_client_ and kinde_client_.is_authenticated():
+            data.update(get_authorized_data(kinde_client_))
             template = "home.html"
+
     return render_template(template, **data)
+'''
+
+
+def get_user_organization_code(email):
+    # Get user details
+    user_details = kinde_client.get_user_details()
+
+    # Check if the email matches
+    if user_details.get("email") == email:
+        # Get organization details
+        org_details = kinde_client.get_organization()
+        return org_details.get("code") if org_details else None
+
+    return None
+
+
+def get_organization_from_email(email):
+    """
+       To fully implement this option you need to create a database that keeps records of registered users and
+       the relevant organization
+
+       :param email:
+       :return: organization code
+    """
+
+    if not email:
+        return None
+
+    # Extract the domain from the email
+    email_domain = email.split('@')[-1]
+
+    """
+        IMPORTANT NOTE: This logic is meant to be used as an example of how the core logic of matching email domain with 
+        org would work quickly. It should and could be replaced with a database lookup or a more robust solution.
+        The database lookup could be based on the user record or on the organization record (e.g. the org code has a 
+        record and the domain is stored there as a column of the row or the user record has a column with the org code 
+        and the email)
+        
+        So this could look like:
+        
+        user lookup: ORM call to get user by email, and the object has the org code --> user.organization.org_code OR
+        user.org_code
+        org lookup: ORM call to get org by domain, and the object has the org code --> org.org_code
+        
+        The example below is based on organization lookup. Please adjust as needed, the point is having a logic that
+        allows you to get the org code from the email domain or email, in the case of user lookup.  
+    """
+    organization_mapping = {
+        "org1.com": "org_800ae4346c69",
+        "org2.com": "org_dddca967a530"
+    }
+
+    # Check if the domain matches any organization
+    for domain, org_code in organization_mapping.items():
+        if email_domain == domain:
+            return org_code
+
+    return None
+
+
+@app.route("/", methods=['GET', 'POST'])
+def index():
+    """
+        Main route handling email submission and organization detection.
+        Processes form input to determine organization code and redirects accordingly.
+    """
+    template = "logged_out_central.html"
+    data = {"current_year": date.today().year}
+
+    if request.method == 'POST':
+        email = request.form.get('email')
+        # organization validation logic here
+        organization_code = get_organization_from_email(email)
+
+        if organization_code:
+            # Redirect to Kinde login with organization code
+            login_url = kinde_client.get_login_url({
+                "auth_url_params": {
+                    # "org_code": organization_code,
+                    # "connection_id": "conn_019506549e97ba3c4a40ec916aefe8bd",
+                    # "login_hint": "phone:"
+                    "prompt": "none",
+                    "redirect_uri": "http://app2.localtest.me:5000/auth/callback", # NOTE: Check with Kinde if we can
+                    # pass this parameter # TODO: Update this as a callback in Kinde (?)
+                }
+            })
+            return redirect(login_url)
+        else:
+            data['error'] = "Invalid email domain or organization not found"
+
+    if session.get("user"):
+        kinde_client_ = user_clients.get(session.get("user"))
+        if kinde_client_ and kinde_client_.is_authenticated():
+            data.update(get_authorized_data(kinde_client_))
+            template = "home.html"
+
+    return render_template(template, **data)
+
+
+'''
+@app.route("/", methods=['GET', 'POST'])
+def index():
+    """
+    Main route handling organization selection via buttons.
+    Processes button input to determine organization code and redirects accordingly.
+    """
+    template = "logged_out_central.html"
+    data = {"current_year": date.today().year}
+    allowed_organizations = {
+        "org_800ae4346c69": "Test Organization 1",
+        "org_dddca967a530": "Test Organization 2"
+    }
+
+    if request.method == 'POST':
+        organization_code = request.form.get('organization')
+
+        if organization_code in allowed_organizations:
+            login_url = kinde_client.get_login_url({
+                "auth_url_params": {
+                    "org_code": organization_code,
+                    "login_hint": "hello@gmail.com"
+                }
+            })
+            kinde_client.get_login_url()
+            return redirect(login_url)
+        else:
+            data['error'] = "Invalid organization selection"
+
+    if session.get("user"):
+        kinde_client_ = user_clients.get(session.get("user"))
+        if kinde_client_ and kinde_client_.is_authenticated():
+            data.update(get_authorized_data(kinde_client_))
+            template = "home.html"
+
+    data['organizations'] = allowed_organizations
+    return render_template(template, **data)
+'''
 
 
 @app.route("/api/auth/login")
@@ -88,6 +263,11 @@ def callback():
     data.update(get_authorized_data(kinde_client))
     session["user"] = data.get("id")
     user_clients[data.get("id")] = kinde_client
+
+    # Get user organizations here
+    orgs = kinde_client.get_user_organizations()
+    print("User Organizations:", orgs)
+
     return app.redirect(url_for("index"))
 
 
@@ -113,7 +293,18 @@ def get_details():
             data.update(get_authorized_data(kinde_client))
             data["access_token"] = kinde_client.configuration.access_token
             data["organizations"] = kinde_client.get_user_organizations()
-            print("ORGANIZATIONS:", data["organizations"])
+            # Print the ID and access token
+            user_details = kinde_client.get_user_details()
+            access_token = kinde_client.configuration.access_token
+            print(f"User ID: {user_details.get('id')}")
+            print(f"Access Token: {access_token}")
+            print(f"Whatever: {kinde_client.client.token}")
+
+            print(kinde_client.get_claim("groups"))
+
+            print(kinde_client.get_claim("groups", "id_token"))  # ext_provider > claims* > profile > groups
+            print(kinde_client.get_claim("organizations", "id_token"))  # ext_provider > claims* > access_token > groups
+
             template = "details.html"
 
     return render_template(template, **data)
